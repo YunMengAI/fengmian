@@ -4,20 +4,23 @@
 
 `爆款封面LLM提示词`
 
-它会读取一张图片，调用 RunningHub 的 LLM 图像理解能力，再根据内置系统提示词输出一段完整封面提示词。
+它会调用 RunningHub 的 LLM 能力，再根据内置系统提示词输出一段完整封面提示词。
+
+图片是可选项：接入图片时按图生图/识图提示词生成；不接图片时按文生图提示词生成。
 
 ## 节点输入
 
-- `加载图像`：接 ComfyUI 自带的 Load Image 节点
-- `api_key`：RunningHub API Key
 - `model`：RunningHub LLM 模型
 - `平台类型`
 - `内容类型`
 - `封面风格`
 - `主题关键词`
 - `封面标题`
+- `加载图像`：可选，接 ComfyUI 自带的 Load Image 节点
+- `api_key`：可选，本地自测或外部接口需要时再填
 - `补充要求`
 - `api_baseurl`
+- `api_config`
 - `temperature`
 - `max_tokens`
 
@@ -25,7 +28,7 @@
 
 - `系统提示词`
 
-这里的输出实际是 LLM 根据图片生成的完整封面提示词，可以继续接到后面的图像生成节点。
+这里的输出实际是 LLM 根据图片或文字需求生成的完整封面提示词，可以继续接到后面的图像生成节点。
 
 ## 在 ComfyUI 里搜什么
 
@@ -39,7 +42,9 @@
 
 ## API Key
 
-优先在节点里的 `api_key` 输入框填写。
+在 RunningHub 平台上通常不需要手动填写 `api_key`。
+
+本地自测或接外部 OpenAI 兼容接口时，可以在节点里的 `api_key` 输入框填写。
 
 也可以设置环境变量：
 
@@ -59,7 +64,7 @@ https://llm.runninghub.cn/v1
 {api_baseurl}/chat/completions
 ```
 
-这个调用方式参考 RunningHub LLM 插件的 OpenAI 兼容接口。
+这个调用方式参考 RunningHub 官方 `RH LLM Chat Completions` 节点的 OpenAI 兼容接口。
 
 ## 系统提示词维护
 
