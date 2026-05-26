@@ -13,6 +13,9 @@ def main():
     print("必填输入:")
     print(", ".join(input_types["required"].keys()))
     print()
+    print("可选输入:")
+    print(", ".join(input_types["optional"].keys()))
+    print()
     print("输出:")
     print(", ".join(node.RETURN_NAMES))
 
