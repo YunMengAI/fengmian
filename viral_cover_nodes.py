@@ -44,7 +44,13 @@ def load_system_prompt():
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def get_api_key(api_key):
+def get_api_key(api_key=None, api_config=None):
+    if isinstance(api_config, dict):
+        for key in ("api_key", "apiKey", "apikey"):
+            value = str(api_config.get(key, "")).strip()
+            if value:
+                return value
+
     api_key = (api_key or "").strip()
     if api_key:
         return api_key
@@ -62,7 +68,7 @@ def get_api_key(api_key):
     except Exception:
         pass
 
-    raise RuntimeError("请填写 RunningHub API Key，或设置环境变量 RH_API_KEY。")
+    return ""
 
 
 def tensor_to_jpeg_data_url(image):
@@ -101,7 +107,7 @@ def remove_think_tags(text):
 
 
 def build_user_prompt(平台类型, 内容类型, 封面风格, 主题关键词, 封面标题, 补充要求):
-    return f"""请识别我上传的图片，并结合以下变量，输出一段可直接用于 AI 绘图的完整封面提示词。
+    return f"""请根据我提供的图片或文字需求，结合以下变量，输出一段可直接用于 AI 绘图的完整封面提示词。
 
 平台类型：{平台类型}
 内容类型：{内容类型}
@@ -110,7 +116,8 @@ def build_user_prompt(平台类型, 内容类型, 封面风格, 主题关键词,
 封面标题：{封面标题}
 补充要求：{补充要求.strip() or "无"}
 
-请重点分析原图里的主体、构图、色彩、光影、背景、人物/产品状态、可复用的视觉卖点。
+如果我提供了图片，请重点分析原图里的主体、构图、色彩、光影、背景、人物/产品状态、可复用的视觉卖点。
+如果没有图片，请直接根据文字变量生成适合文生图的封面提示词。
 输出时只给最终提示词，不要解释过程。"""
 
 
@@ -132,8 +139,6 @@ class ViralCoverLLMPrompt:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "加载图像": ("IMAGE",),
-                "api_key": ("STRING", {"default": "", "multiline": False}),
                 "model": ("STRING", {"default": "google/gemini-3.1-flash-lite-preview", "multiline": False}),
                 "平台类型": (PLATFORMS,),
                 "内容类型": (CONTENT_TYPES,),
@@ -142,8 +147,11 @@ class ViralCoverLLMPrompt:
                 "封面标题": ("STRING", {"default": "新手也能做出爆款封面", "multiline": False}),
             },
             "optional": {
+                "加载图像": ("IMAGE",),
+                "api_key": ("STRING", {"default": "", "multiline": False}),
                 "补充要求": ("STRING", {"default": "", "multiline": True}),
                 "api_baseurl": ("STRING", {"default": DEFAULT_BASE_URL, "multiline": False}),
+                "api_config": ("RH_OPENAPI_CONFIG",),
                 "temperature": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 2.0, "step": 0.1}),
                 "max_tokens": ("INT", {"default": 2048, "min": 256, "max": 8192, "step": 1}),
             },
@@ -156,38 +164,42 @@ class ViralCoverLLMPrompt:
 
     def generate(
         self,
-        加载图像,
-        api_key,
         model,
         平台类型,
         内容类型,
         封面风格,
         主题关键词,
         封面标题,
+        加载图像=None,
+        api_key="",
         补充要求="",
         api_baseurl=DEFAULT_BASE_URL,
+        api_config=None,
         temperature=0.4,
         max_tokens=2048,
     ):
-        image_url = tensor_to_jpeg_data_url(加载图像)
         role = load_system_prompt()
         prompt = build_user_prompt(平台类型, 内容类型, 封面风格, 主题关键词, 封面标题, 补充要求)
         endpoint = f"{api_baseurl.rstrip('/')}/chat/completions"
         headers = {
-            "Authorization": f"Bearer {get_api_key(api_key)}",
             "Content-Type": "application/json",
         }
+        api_key_value = get_api_key(api_key, api_config)
+        if api_key_value:
+            headers["Authorization"] = f"Bearer {api_key_value}"
+
+        user_content = prompt
+        if 加载图像 is not None:
+            user_content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": tensor_to_jpeg_data_url(加载图像)}},
+            ]
+
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": role},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                    ],
-                },
+                {"role": "user", "content": user_content},
             ],
             "temperature": float(temperature),
             "max_tokens": int(max_tokens),
