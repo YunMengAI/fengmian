@@ -11,25 +11,24 @@ from pathlib import Path
 
 RUNNINGHUB_LLM_CHAT_URL = "https://llm.runninghub.cn/v1/chat/completions"
 RUNNINGHUB_LLM_MODELS_URL = "https://llm.runninghub.ai/v1/models"
+MODEL_CACHE_TTL_SECONDS = 3600
 RUNNINGHUB_DEFAULT_MODELS = [
-    "google/gemini-3.1-pro-preview",
-    "gemini-3.1-pro-preview",
     "google/gemini-3.1-flash-lite-preview",
-    "gemini-3.1-flash-lite-preview",
 ]
 RUNNINGHUB_FALLBACK_MODELS = [
-    "doubao-seed-1-6-251015",
-    "doubao-seed-2-0-pro-260215",
-    "doubao-seed-2-0-lite-260215",
-    "DeepSeek-V3",
-    "Qwen3-235B-A22B-Instruct-2507",
-    "gemini-2.5-flash",
-    "gpt-5",
-    "gemini-3-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-3.1-pro-preview",
-    "GLM-4.6v",
+    "google/gemini-3.1-flash-lite-preview",
+    "qwen/qwen3-vl-235b-a22b-instruct",
+    "qwen/qwen-plus",
+    "qwen/qwen-max",
+    "qwen/qwen3-235b-a22b-2507",
+    "deepseek/deepseek-v3.2",
+    "deepseek/deepseek-chat",
+    "rh-llm-o/rh-t-55",
+    "rh-llm-o/rh-t-54",
+    "rh-llm-g/rh-g-flash-preview-3",
+    "rh-llm-g/rh-g-pro-preview-31",
 ]
+MODEL_CACHE = {"expires_at": 0.0, "models": None}
 
 PLATFORMS = [
     "小红书封面",
@@ -67,6 +66,11 @@ def load_system_prompt():
 
 
 def fetch_runninghub_models():
+    now = time.time()
+    cached = MODEL_CACHE.get("models")
+    if cached and now < float(MODEL_CACHE.get("expires_at", 0)):
+        return list(cached)
+
     try:
         request = urllib.request.Request(RUNNINGHUB_LLM_MODELS_URL, method="GET")
         with urllib.request.urlopen(request, timeout=5) as response:
@@ -78,6 +82,8 @@ def fetch_runninghub_models():
             if isinstance(item, dict) and str(item.get("id", "")).strip()
         ]
         if models:
+            MODEL_CACHE["models"] = models
+            MODEL_CACHE["expires_at"] = now + MODEL_CACHE_TTL_SECONDS
             return models
     except Exception as exc:
         print(f"[ViralCoverLLMPrompt] Failed to fetch RunningHub models, using fallback: {type(exc).__name__}")
@@ -93,6 +99,9 @@ def default_runninghub_model(models):
 
 
 def get_config_value(config, *keys):
+    if isinstance(config, list) and config:
+        config = config[0]
+
     if not isinstance(config, dict):
         return ""
 
@@ -113,7 +122,7 @@ def get_api_key(api_key=None, api_config=None, llm_config=None):
     if api_key:
         return api_key
 
-    env_key = (os.environ.get("RUNNINGHUB_LLM_API_KEY") or os.environ.get("RH_LLM_API_KEY") or "").strip()
+    env_key = (os.environ.get("RH_API_KEY") or os.environ.get("RUNNINGHUB_API_KEY") or "").strip()
     if env_key:
         return env_key
 
@@ -126,18 +135,16 @@ def get_api_key(api_key=None, api_config=None, llm_config=None):
     except Exception:
         pass
 
-    env_key = (os.environ.get("RH_API_KEY") or os.environ.get("RUNNINGHUB_API_KEY") or "").strip()
-    if env_key:
-        return env_key
-
     return ""
 
 
 def resolve_base_url(api_baseurl="", api_config=None, llm_config=None):
-    for config in (api_config, llm_config):
-        value = get_config_value(config, "base_url", "api_url", "api_baseurl")
-        if value:
-            return value
+    value = get_config_value(llm_config, "base_url", "api_url", "api_baseurl")
+    if value:
+        return value
+
+    # RH_OPENAPI_CONFIG base_url is for the standard OpenAPI/upload gateway,
+    # while LLM chat always uses the dedicated llm.runninghub.cn endpoint.
     return (api_baseurl or DEFAULT_BASE_URL).strip()
 
 
