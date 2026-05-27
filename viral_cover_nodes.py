@@ -9,6 +9,28 @@ from io import BytesIO
 from pathlib import Path
 
 
+RUNNINGHUB_LLM_CHAT_URL = "https://llm.runninghub.cn/v1/chat/completions"
+RUNNINGHUB_LLM_MODELS_URL = "https://llm.runninghub.ai/v1/models"
+RUNNINGHUB_DEFAULT_MODELS = [
+    "google/gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview",
+    "google/gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite-preview",
+]
+RUNNINGHUB_FALLBACK_MODELS = [
+    "doubao-seed-1-6-251015",
+    "doubao-seed-2-0-pro-260215",
+    "doubao-seed-2-0-lite-260215",
+    "DeepSeek-V3",
+    "Qwen3-235B-A22B-Instruct-2507",
+    "gemini-2.5-flash",
+    "gpt-5",
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview",
+    "GLM-4.6v",
+]
+
 PLATFORMS = [
     "小红书封面",
     "抖音视频封面",
@@ -36,7 +58,7 @@ STYLES = [
     "商业海报风",
 ]
 
-DEFAULT_BASE_URL = "https://llm.runninghub.cn/v1"
+DEFAULT_BASE_URL = RUNNINGHUB_LLM_CHAT_URL
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("system_prompt.txt")
 
 
@@ -44,18 +66,54 @@ def load_system_prompt():
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def get_api_key(api_key=None, api_config=None):
-    if isinstance(api_config, dict):
-        for key in ("api_key", "apiKey", "apikey"):
-            value = str(api_config.get(key, "")).strip()
-            if value:
-                return value
+def fetch_runninghub_models():
+    try:
+        request = urllib.request.Request(RUNNINGHUB_LLM_MODELS_URL, method="GET")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = response.read().decode("utf-8", errors="replace")
+        data = json.loads(body)
+        models = [
+            str(item.get("id", "")).strip()
+            for item in data.get("data", [])
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        ]
+        if models:
+            return models
+    except Exception as exc:
+        print(f"[ViralCoverLLMPrompt] Failed to fetch RunningHub models, using fallback: {type(exc).__name__}")
+
+    return list(RUNNINGHUB_FALLBACK_MODELS)
+
+
+def default_runninghub_model(models):
+    for model in RUNNINGHUB_DEFAULT_MODELS:
+        if model in models:
+            return model
+    return models[0]
+
+
+def get_config_value(config, *keys):
+    if not isinstance(config, dict):
+        return ""
+
+    for key in keys:
+        value = str(config.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def get_api_key(api_key=None, api_config=None, llm_config=None):
+    for config in (api_config, llm_config):
+        value = get_config_value(config, "api_key", "apiKey", "apikey")
+        if value:
+            return value
 
     api_key = (api_key or "").strip()
     if api_key:
         return api_key
 
-    env_key = (os.environ.get("RH_API_KEY") or os.environ.get("RUNNINGHUB_API_KEY") or "").strip()
+    env_key = (os.environ.get("RUNNINGHUB_LLM_API_KEY") or os.environ.get("RH_LLM_API_KEY") or "").strip()
     if env_key:
         return env_key
 
@@ -68,7 +126,34 @@ def get_api_key(api_key=None, api_config=None):
     except Exception:
         pass
 
+    env_key = (os.environ.get("RH_API_KEY") or os.environ.get("RUNNINGHUB_API_KEY") or "").strip()
+    if env_key:
+        return env_key
+
     return ""
+
+
+def resolve_base_url(api_baseurl="", api_config=None, llm_config=None):
+    for config in (api_config, llm_config):
+        value = get_config_value(config, "base_url", "api_url", "api_baseurl")
+        if value:
+            return value
+    return (api_baseurl or DEFAULT_BASE_URL).strip()
+
+
+def resolve_model(model, api_config=None, llm_config=None):
+    for config in (api_config, llm_config):
+        value = get_config_value(config, "model_name", "models_name", "model")
+        if value:
+            return value
+    return model
+
+
+def normalize_chat_endpoint(base_url):
+    base_url = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        return base_url
+    return f"{base_url}/chat/completions"
 
 
 def tensor_to_jpeg_data_url(image):
@@ -137,9 +222,10 @@ def post_json(endpoint, headers, payload):
 class ViralCoverLLMPrompt:
     @classmethod
     def INPUT_TYPES(cls):
+        models = fetch_runninghub_models()
         return {
             "required": {
-                "model": ("STRING", {"default": "google/gemini-3.1-flash-lite-preview", "multiline": False}),
+                "model": (models, {"default": default_runninghub_model(models)}),
                 "平台类型": (PLATFORMS,),
                 "内容类型": (CONTENT_TYPES,),
                 "封面风格": (STYLES,),
@@ -152,6 +238,7 @@ class ViralCoverLLMPrompt:
                 "补充要求": ("STRING", {"default": "", "multiline": True}),
                 "api_baseurl": ("STRING", {"default": DEFAULT_BASE_URL, "multiline": False}),
                 "api_config": ("RH_OPENAPI_CONFIG",),
+                "llm_config": ("SYNVOW_LLM_CONFIG",),
                 "temperature": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 2.0, "step": 0.1}),
                 "max_tokens": ("INT", {"default": 2048, "min": 256, "max": 8192, "step": 1}),
             },
@@ -175,16 +262,18 @@ class ViralCoverLLMPrompt:
         补充要求="",
         api_baseurl=DEFAULT_BASE_URL,
         api_config=None,
+        llm_config=None,
         temperature=0.4,
         max_tokens=2048,
     ):
         role = load_system_prompt()
         prompt = build_user_prompt(平台类型, 内容类型, 封面风格, 主题关键词, 封面标题, 补充要求)
-        endpoint = f"{api_baseurl.rstrip('/')}/chat/completions"
+        model = resolve_model(model, api_config, llm_config)
+        endpoint = normalize_chat_endpoint(resolve_base_url(api_baseurl, api_config, llm_config))
         headers = {
             "Content-Type": "application/json",
         }
-        api_key_value = get_api_key(api_key, api_config)
+        api_key_value = get_api_key(api_key, api_config, llm_config)
         if api_key_value:
             headers["Authorization"] = f"Bearer {api_key_value}"
 
