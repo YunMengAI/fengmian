@@ -10,17 +10,15 @@
 
 ## 节点输入
 
-- `model`：RunningHub LLM 模型
+- `model`：RunningHub LLM 模型下拉框，优先从 `https://llm.runninghub.ai/v1/models` 获取
 - `平台类型`
 - `内容类型`
 - `封面风格`
 - `主题关键词`
 - `封面标题`
 - `加载图像`：可选，接 ComfyUI 自带的 Load Image 节点
-- `api_key`：可选，本地自测或外部接口需要时再填
+- `api_key`：可选，在 RunningHub 平台上通常不用填
 - `补充要求`
-- `api_baseurl`
-- `api_config`
 - `temperature`
 - `max_tokens`
 
@@ -40,31 +38,31 @@
 
 `爆款封面LLM提示词`
 
+## RunningHub LLM
+
+节点使用 RunningHub 官方 LLM OpenAI 兼容接口：
+
+```text
+https://llm.runninghub.cn/v1/chat/completions
+```
+
+模型下拉框会优先从 RunningHub 模型接口获取：
+
+```text
+https://llm.runninghub.ai/v1/models
+```
+
+如果当前运行环境临时拉不到模型接口，节点会显示 RunningHub 官方节点同款备用模型列表。
+
 ## API Key
 
-在 RunningHub 平台上通常不需要手动填写 `api_key`。
+在 RunningHub 平台上通常不需要手动填写 `api_key`，平台环境可以使用 RH 自己的 LLM 能力。
 
-本地自测或接外部 OpenAI 兼容接口时，可以在节点里的 `api_key` 输入框填写。
-
-也可以设置环境变量：
+本地自测时，如果你的环境需要鉴权，可以填写节点里的 `api_key`，或者设置环境变量：
 
 ```bash
 RH_API_KEY=你的RunningHubKey
 ```
-
-节点默认调用：
-
-```text
-https://llm.runninghub.cn/v1
-```
-
-节点会自动调用：
-
-```text
-{api_baseurl}/chat/completions
-```
-
-这个调用方式参考 RunningHub 官方 `RH LLM Chat Completions` 节点的 OpenAI 兼容接口。
 
 ## 系统提示词维护
 
