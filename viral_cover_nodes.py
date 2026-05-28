@@ -8,15 +8,21 @@ import urllib.request
 from io import BytesIO
 from pathlib import Path
 
+try:
+    import requests
+except ImportError:
+    requests = None
 
-RUNNINGHUB_LLM_CHAT_URL = "https://llm.runninghub.cn/v1/chat/completions"
-RUNNINGHUB_LLM_MODELS_URL = "https://llm.runninghub.ai/v1/models"
+
+LLM_MODELS_URL = "https://llm.runninghub.ai/v1/models"
+LLM_CHAT_URL = "https://llm.runninghub.cn/v1/chat/completions"
 MODEL_CACHE_TTL_SECONDS = 3600
-RUNNINGHUB_DEFAULT_MODELS = [
-    "google/gemini-3.1-flash-lite-preview",
-]
-RUNNINGHUB_FALLBACK_MODELS = [
-    "google/gemini-3.1-flash-lite-preview",
+CHAT_MAX_RETRIES = 3
+DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+MODEL_CACHE = {"expires_at": 0.0, "models": None}
+
+FALLBACK_MODELS = [
+    DEFAULT_MODEL,
     "qwen/qwen3-vl-235b-a22b-instruct",
     "qwen/qwen-plus",
     "qwen/qwen-max",
@@ -28,7 +34,6 @@ RUNNINGHUB_FALLBACK_MODELS = [
     "rh-llm-g/rh-g-flash-preview-3",
     "rh-llm-g/rh-g-pro-preview-31",
 ]
-MODEL_CACHE = {"expires_at": 0.0, "models": None}
 
 PLATFORMS = [
     "小红书封面",
@@ -57,7 +62,6 @@ STYLES = [
     "商业海报风",
 ]
 
-DEFAULT_BASE_URL = RUNNINGHUB_LLM_CHAT_URL
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("system_prompt.txt")
 
 
@@ -65,19 +69,25 @@ def load_system_prompt():
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def fetch_runninghub_models():
+def fetch_llm_models(force=False):
     now = time.time()
     cached = MODEL_CACHE.get("models")
-    if cached and now < float(MODEL_CACHE.get("expires_at", 0)):
+    if not force and cached and now < float(MODEL_CACHE.get("expires_at", 0)):
         return list(cached)
 
     try:
-        request = urllib.request.Request(RUNNINGHUB_LLM_MODELS_URL, method="GET")
-        with urllib.request.urlopen(request, timeout=5) as response:
-            body = response.read().decode("utf-8", errors="replace")
-        data = json.loads(body)
+        if requests is not None:
+            response = requests.get(LLM_MODELS_URL, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+        else:
+            request = urllib.request.Request(LLM_MODELS_URL, method="GET")
+            with urllib.request.urlopen(request, timeout=5) as response:
+                body = response.read().decode("utf-8", errors="replace")
+            data = json.loads(body)
+
         models = [
-            str(item.get("id", "")).strip()
+            str(item.get("id")).strip()
             for item in data.get("data", [])
             if isinstance(item, dict) and str(item.get("id", "")).strip()
         ]
@@ -86,38 +96,16 @@ def fetch_runninghub_models():
             MODEL_CACHE["expires_at"] = now + MODEL_CACHE_TTL_SECONDS
             return models
     except Exception as exc:
-        print(f"[ViralCoverLLMPrompt] Failed to fetch RunningHub models, using fallback: {type(exc).__name__}")
+        print(f"[ViralCoverLLMPrompt] Failed to fetch RunningHub model list, using fallback: {type(exc).__name__}")
 
-    return list(RUNNINGHUB_FALLBACK_MODELS)
-
-
-def default_runninghub_model(models):
-    for model in RUNNINGHUB_DEFAULT_MODELS:
-        if model in models:
-            return model
-    return models[0]
+    return list(FALLBACK_MODELS)
 
 
-def get_config_value(config, *keys):
-    if isinstance(config, list) and config:
-        config = config[0]
-
-    if not isinstance(config, dict):
-        return ""
-
-    for key in keys:
-        value = str(config.get(key, "")).strip()
-        if value:
-            return value
-    return ""
+def default_model(models):
+    return DEFAULT_MODEL if DEFAULT_MODEL in models else models[0]
 
 
-def get_api_key(api_key=None, api_config=None, llm_config=None):
-    for config in (api_config, llm_config):
-        value = get_config_value(config, "api_key", "apiKey", "apikey")
-        if value:
-            return value
-
+def get_api_key(api_key=None):
     api_key = (api_key or "").strip()
     if api_key:
         return api_key
@@ -136,31 +124,6 @@ def get_api_key(api_key=None, api_config=None, llm_config=None):
         pass
 
     return ""
-
-
-def resolve_base_url(api_baseurl="", api_config=None, llm_config=None):
-    value = get_config_value(llm_config, "base_url", "api_url", "api_baseurl")
-    if value:
-        return value
-
-    # RH_OPENAPI_CONFIG base_url is for the standard OpenAPI/upload gateway,
-    # while LLM chat always uses the dedicated llm.runninghub.cn endpoint.
-    return (api_baseurl or DEFAULT_BASE_URL).strip()
-
-
-def resolve_model(model, api_config=None, llm_config=None):
-    for config in (api_config, llm_config):
-        value = get_config_value(config, "model_name", "models_name", "model")
-        if value:
-            return value
-    return model
-
-
-def normalize_chat_endpoint(base_url):
-    base_url = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
-    if base_url.endswith("/chat/completions"):
-        return base_url
-    return f"{base_url}/chat/completions"
 
 
 def tensor_to_jpeg_data_url(image):
@@ -200,7 +163,6 @@ def remove_think_tags(text):
 
 def build_user_prompt(平台类型, 内容类型, 封面风格, 主题关键词, 封面标题, 补充要求):
     return f"""请根据我提供的图片或文字需求，结合以下变量，输出一段可直接用于 AI 绘图的完整封面提示词。
-
 平台类型：{平台类型}
 内容类型：{内容类型}
 封面风格：{封面风格}
@@ -208,31 +170,61 @@ def build_user_prompt(平台类型, 内容类型, 封面风格, 主题关键词,
 封面标题：{封面标题}
 补充要求：{补充要求.strip() or "无"}
 
-如果我提供了图片，请重点分析原图里的主体、构图、色彩、光影、背景、人物/产品状态、可复用的视觉卖点。
-如果没有图片，请直接根据文字变量生成适合文生图的封面提示词。
-输出时只给最终提示词，不要解释过程。"""
+如果我提供了图片，请重点分析原图里的主体、构图、色彩、光影、背景、人物/产品状态、可复用的视觉卖点。如果没有图片，请直接根据文字变量生成适合文生图的封面提示词。输出时只给最终提示词，不要解释过程。"""
 
 
-def post_json(endpoint, headers, payload):
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+def post_chat_completion(headers, payload, timeout=180):
+    last_error = None
+    for attempt in range(CHAT_MAX_RETRIES):
+        if attempt > 0:
+            wait = min(2 ** attempt, 5)
+            print(f"[ViralCoverLLMPrompt] Chat retry {attempt + 1}/{CHAT_MAX_RETRIES} in {wait}s...")
+            time.sleep(wait)
 
-    try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            body = response.read().decode("utf-8", errors="replace")
-            return response.status, body
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        return exc.code, body
+        if requests is not None:
+            response = requests.post(LLM_CHAT_URL, headers=headers, json=payload, timeout=timeout)
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise RuntimeError(f"RunningHub LLM 返回了非 JSON 内容：{response.text[:200]}") from exc
+
+            status_code = response.status_code
+            response_text = response.text
+        else:
+            data_bytes = json.dumps(payload).encode("utf-8")
+            request = urllib.request.Request(LLM_CHAT_URL, data=data_bytes, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    status_code = response.status
+                    response_text = response.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as exc:
+                status_code = exc.code
+                response_text = exc.read().decode("utf-8", errors="replace")
+
+            try:
+                data = json.loads(response_text)
+            except ValueError as exc:
+                raise RuntimeError(f"RunningHub LLM 返回了非 JSON 内容：{response_text[:200]}") from exc
+
+        if status_code == 200:
+            return data
+
+        message = data.get("error") or data.get("message") or data.get("msg") or response_text[:200]
+        last_error = RuntimeError(f"RunningHub LLM 调用失败：HTTP {status_code}: {message}")
+        if status_code >= 500 or status_code == 429:
+            continue
+        raise last_error
+
+    raise last_error or RuntimeError("RunningHub LLM 调用失败。")
 
 
 class ViralCoverLLMPrompt:
     @classmethod
     def INPUT_TYPES(cls):
-        models = fetch_runninghub_models()
+        models = fetch_llm_models()
         return {
             "required": {
-                "model": (models, {"default": default_runninghub_model(models)}),
+                "model": (models, {"default": default_model(models)}),
                 "平台类型": (PLATFORMS,),
                 "内容类型": (CONTENT_TYPES,),
                 "封面风格": (STYLES,),
@@ -243,9 +235,6 @@ class ViralCoverLLMPrompt:
                 "加载图像": ("IMAGE",),
                 "api_key": ("STRING", {"default": "", "multiline": False}),
                 "补充要求": ("STRING", {"default": "", "multiline": True}),
-                "api_baseurl": ("STRING", {"default": DEFAULT_BASE_URL, "multiline": False}),
-                "api_config": ("RH_OPENAPI_CONFIG",),
-                "llm_config": ("SYNVOW_LLM_CONFIG",),
                 "temperature": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 2.0, "step": 0.1}),
                 "max_tokens": ("INT", {"default": 2048, "min": 256, "max": 8192, "step": 1}),
             },
@@ -267,20 +256,15 @@ class ViralCoverLLMPrompt:
         加载图像=None,
         api_key="",
         补充要求="",
-        api_baseurl=DEFAULT_BASE_URL,
-        api_config=None,
-        llm_config=None,
         temperature=0.4,
         max_tokens=2048,
     ):
         role = load_system_prompt()
         prompt = build_user_prompt(平台类型, 内容类型, 封面风格, 主题关键词, 封面标题, 补充要求)
-        model = resolve_model(model, api_config, llm_config)
-        endpoint = normalize_chat_endpoint(resolve_base_url(api_baseurl, api_config, llm_config))
         headers = {
             "Content-Type": "application/json",
         }
-        api_key_value = get_api_key(api_key, api_config, llm_config)
+        api_key_value = get_api_key(api_key)
         if api_key_value:
             headers["Authorization"] = f"Bearer {api_key_value}"
 
@@ -306,14 +290,9 @@ class ViralCoverLLMPrompt:
         }
 
         try:
-            status_code, body = post_json(endpoint, headers, payload)
-            data = json.loads(body)
-        except ValueError as exc:
-            raise RuntimeError(f"RunningHub LLM 返回了非 JSON 内容：{body[:200]}") from exc
-
-        if status_code != 200:
-            message = data.get("error") or data.get("message") or data.get("msg") or body[:200]
-            raise RuntimeError(f"RunningHub LLM 调用失败：HTTP {status_code}: {message}")
+            data = post_chat_completion(headers, payload)
+        except Exception as exc:
+            raise RuntimeError(f"RunningHub LLM 网络请求失败：{exc}") from exc
 
         choices = data.get("choices")
         if not choices:
