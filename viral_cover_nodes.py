@@ -391,5 +391,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ViralCoverLLMPrompt": "爆款封面LLM提示词",
+    "ViralCoverLLMPrompt": "YM-爆款封面",
 }
