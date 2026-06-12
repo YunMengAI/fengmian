@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import re
@@ -64,6 +65,10 @@ SYSTEM_PROMPT_PATH = Path(__file__).with_name("system_prompt.txt")
 
 def load_system_prompt():
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def text_fingerprint(text):
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:12]
 
 
 def fetch_llm_models(force=False):
@@ -203,13 +208,6 @@ def sanitize_for_image_generation(text):
     sanitized = text
     for source, target in SAFETY_REPLACEMENTS.items():
         sanitized = sanitized.replace(source, target)
-
-    safety_note = (
-        "人物呈现自然得体，服装完整，避免低俗、擦边、过度暴露、身体局部特写、"
-        "未成年人不适宜内容、文字乱码、水印和杂乱背景。"
-    )
-    if "避免低俗" not in sanitized and "服装完整" not in sanitized:
-        sanitized = f"{sanitized}，{safety_note}"
     return sanitized.strip()
 
 
@@ -383,6 +381,9 @@ class ViralCoverLLMPrompt:
                     "model": model,
                     "cover_style": 封面风格,
                     "chat_url": chat_url,
+                    "node_file": str(Path(__file__).resolve()),
+                    "system_prompt_path": str(SYSTEM_PROMPT_PATH.resolve()),
+                    "system_prompt_hash": text_fingerprint(role),
                     "has_image": has_image,
                     "image_size": image_size,
                     "content_type": "multimodal" if has_image else "text",
@@ -413,7 +414,18 @@ class ViralCoverLLMPrompt:
         result = sanitize_for_image_generation(remove_think_tags(str(content)))
         result = ensure_active_style(result, 封面风格)
         print(f"[ViralCoverLLMPrompt] RH LLM request finished at {int(time.time())}")
-        print(json.dumps({"model": model, "output_length": len(result), "has_image": has_image}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "model": model,
+                    "cover_style": 封面风格,
+                    "output_length": len(result),
+                    "output_hash": text_fingerprint(result),
+                    "has_image": has_image,
+                },
+                ensure_ascii=False,
+            )
+        )
         return (result,)
 
 
