@@ -213,6 +213,13 @@ def sanitize_for_image_generation(text):
     return sanitized.strip()
 
 
+def ensure_active_style(text, cover_style):
+    """Keep the selected style explicit even when the model omits its label."""
+    if not isinstance(text, str) or not cover_style or cover_style in text:
+        return text
+    return f"封面风格为“{cover_style}”。{text}"
+
+
 def build_user_prompt(封面风格, 主题关键词, 封面标题, 自定义要求, has_image=False):
     image_notice = (
         "本次用户已经上传了一张参考图片。你必须先识别图片里的真实主体、服装、场景、背景、构图和光线，再生成封面提示词。"
@@ -316,11 +323,12 @@ class ViralCoverLLMPrompt:
     RETURN_NAMES = ("系统提示词",)
     FUNCTION = "generate"
     CATEGORY = "爆款封面生成"
+    OUTPUT_NODE = True
 
     @classmethod
     def IS_CHANGED(cls, *args, **kwargs):
-        # Always execute again so changing a style cannot reuse an earlier cover prompt.
-        return float("NaN")
+        # Use a JSON-safe token because some hosted ComfyUI cache layers normalize NaN.
+        return time.time_ns()
 
     def generate(
         self,
@@ -403,6 +411,7 @@ class ViralCoverLLMPrompt:
             raise RuntimeError("RunningHub LLM 返回内容为空。")
 
         result = sanitize_for_image_generation(remove_think_tags(str(content)))
+        result = ensure_active_style(result, 封面风格)
         print(f"[ViralCoverLLMPrompt] RH LLM request finished at {int(time.time())}")
         print(json.dumps({"model": model, "output_length": len(result), "has_image": has_image}, ensure_ascii=False))
         return (result,)
